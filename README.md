@@ -1,4 +1,4 @@
-# Pronote Discord Bot
+# Botnote
 
 Vos notes sur Discord ! 📚 
 
