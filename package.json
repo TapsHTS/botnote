@@ -1,0 +1,18 @@
+{
+  "name": "botnote",
+  "version": "1.1.0",
+  "description": "Un bot Discord pour envoyer des notifications Pronote dans un serveur Discord 📚",
+  "main": "index.js",
+  "repository": "https://github.com/TapsHTS/botnote",
+  "author": "TapsHTS",
+  "license": "MIT",
+  "dependencies": {
+    "discord.js": "^12.0.2",
+    "dotenv": "^8.2.0",
+    "moment": "^2.29.1",
+    "pronote-api": "Litarvan/pronote-api"
+  },
+  "devDependencies": {
+    "eslint": "^7.10.0"
+  }
+}
