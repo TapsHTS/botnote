@@ -2,7 +2,7 @@
 
 Vos notes sur Discord ! 📚 
 
-![screen-exemple](./screen-exemple.png)
+![screen-exemple](./screen-exemple.PNG)
 
 ## Installation
 
