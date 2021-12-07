@@ -1,6 +1,6 @@
 # Botnote
 
-Vos notes sur Discord ! 📚 
+Vos notes sur Discord et en notifications ! 📚 
 
 ![screen-exemple](./screen-exemple.PNG)
 
