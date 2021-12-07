@@ -1,14 +1,13 @@
 require("dotenv").config();
 const fs = require("fs");
+const pronote = require("@EduWireApps/pronote-api");
+const fetch = require('node-fetch');
 const moment = require("moment");
+const devip = require('dev-ip');
 moment.locale("fr");
-
-const pronote = require("pronote-api");
-
-const Discord = require("discord.js");
-const client = new Discord.Client();
-
 const DATE_END_OF_YEAR = new Date(Date.now() + 31536000000);
+const { Discord, Client, MessageEmbed } = require("discord.js");
+const client = new Client();
 
 let cache = null;
 
@@ -26,7 +25,8 @@ const writeCache = (newCache) => {
  */
 const resetCache = () => writeCache({
     homeworks: [],
-    marks: []
+    marks: [],
+    lessonsAway: []
 });
 
 // Si le fichier cache n'existe pas, on le créé
@@ -46,7 +46,7 @@ if (!fs.existsSync("cache.json")) {
  * Synchronise le cache avec Pronote et se charge d'appeler les fonctions qui envoient les notifications
  * @returns {void}
  */
-const pronoteSynchronization = async () => {
+const pronoteSynchronization = async() => {
 
     // Connexion à Pronote
     const cas = (process.env.PRONOTE_CAS && process.env.PRONOTE_CAS.length > 0 ? process.env.PRONOTE_CAS : "none");
@@ -64,8 +64,8 @@ const pronoteSynchronization = async () => {
         ...cache,
         homeworks
     });
-
-    const marks = await session.marks("trimester");
+    //Vérification des nouvelles notes
+    const marks = await session.marks("semester");
     const subjectsNewMarks = marks.subjects.filter((subj) => cache.marks.subjects && cache.marks.subjects.find((s) => s.name === subj.name) && cache.marks.subjects.find((s) => s.name === subj.name).averages.student !== subj.averages.student);
     if (subjectsNewMarks.length > 0 && subjectsNewMarks.length <= 3) {
         subjectsNewMarks.forEach((subj) => {
@@ -73,15 +73,63 @@ const pronoteSynchronization = async () => {
             marks.forEach((mark) => sendDiscordNotificationMark(subj, mark));
         });
     }
+
     // Mise à jour du cache pour les notes
     writeCache({
         ...cache,
         marks
     });
 
+    //Vérification des professeurs absents
+    const nextWeekDay = new Date();
+    nextWeekDay.setDate(nextWeekDay.getDate() + 30);
+    const timetable = await session.timetable(new Date(), nextWeekDay);
+    const awayNotifications = [];
+    timetable.filter((lesson) => lesson.isAway).forEach((lesson) => {
+        if (!cache.lessonsAway.some((lessonID) => lessonID === lesson.id)) {
+            awayNotifications.push({
+                teacher: lesson.teacher,
+                from: lesson.from,
+                subject: lesson.subject,
+                id: lesson.id
+            });
+        }
+    });
+    if (awayNotifications.length) {
+        awayNotifications.forEach((awayNotif) => { sendDiscordNotificationAway(awayNotif) });
+    }
+
+    const lessonsAway =
+
+        writeCache({
+            ...cache,
+            lessonsAway: [
+                ...cache.lessonsAway,
+                ...awayNotifications.map((n) => n.id)
+            ]
+        });
+
     // Déconnexion de Pronote
     session.logout();
+};
 
+/**
+ * Envoi une notification de cours annulé sur Discord
+ * @param {any} awayNotif Les informations sur le cours annulé
+ */
+const sendDiscordNotificationAway = (awayNotif) => {
+    const data = {
+        title: '%F0%9F%91%A8%E2%80%8D%E2%9A%95%EF%B8%8F Professeur absent',
+        message: `${awayNotif.teacher} (${awayNotif.subject}) sera absent(e) le ${moment(awayNotif.from).format("dddd Do MMMM")}`
+    }
+    
+    client.users.cache.get(process.env.AUTHOR_ID)
+    .send(`${data.title}\n${data.message}`);
+    
+    fetch(`https://alertzy.app/send?accountKey=${process.env.NOTIFICATION_ID}&title=${data.title}&message=${encodeURIComponent(data.message)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+    })
 };
 
 /**
@@ -89,50 +137,39 @@ const pronoteSynchronization = async () => {
  * @param {string} subject La matière de la note
  * @param {pronote.Mark} mark La note à envoyer
  */
-const sendDiscordNotificationMark = (subject, mark ) => {
-    const infos = `Moyenne de la classe : ${mark.average}/${mark.scale}\nVotre note: ${mark.value}/${mark.scale}`;
-    const description = mark.title ? `${mark.title}\n\n${infos}` : infos;
-    const embed = new Discord.MessageEmbed()
-        .setTitle(subject.name.toUpperCase())
-        .setDescription(description)
-        .setFooter(`Date de l'évaluation : ${moment(mark.date).format("dddd Do MMMM")}`)
-        .setURL(process.env.PRONOTE_URL)
-        .setColor("#70C7A4");
 
-    client.channels.cache.get(process.env.MARKS_CHANNEL_ID).send(embed).then((e) => {
-        e.react("✅");
-    });
-    client.users.cache.get(process.env.AUTHOR_ID).send(` <@${process.env.AUTHOR_ID}> Nouvelle Note en ${subject.name.toUpperCase()} \n -Eval: ${mark.title}\n -Note: ${mark.value}/${mark.scale} \n `)
-}; 
 
-/**
- * Envoi une notification de devoir sur Discord
- * @param {pronote.Homework} homework Le devoir à envoyer
- */
-const sendDiscordNotificationHomework = (homework) => {
-    const embed = new Discord.MessageEmbed()
-        .setTitle(homework.subject.toUpperCase())
-        .setDescription(homework.description)
-        .setFooter(`Devoir pour le ${moment(homework.for).format("dddd Do MMMM")}`)
-        .setURL(process.env.PRONOTE_URL)
-        .setColor("#70C7A4");
-
-    if(homework.files.length >= 1) {
-        embed.addField("Pièces jointes", homework.files.map((file) => {
-            return `[${file.name}](${file.url})`;
-        }).join("\n"), false);
+const sendDiscordNotificationMark = (subject, mark) => {
+    const data = {
+        title: `%F0%9F%93%9A Nouvelle note en ${subject.name.toUpperCase()}`,
+        message: `Tu as eu ${mark.value}/${mark.scale} et la moyenne est de ${mark.average}/${mark.scale}`,
     }
+    
+    client.users.cache.get(process.env.AUTHOR_ID)
+    .send(`${data.title}\n${data.message}`);
 
-    client.channels.cache.get(process.env.HOMEWORKS_CHANNEL_ID).send(embed).then((e) => {
-        e.react("✅");
-    });
+    fetch(`https://alertzy.app/send?accountKey=${process.env.NOTIFICATION_ID}&title=${data.title}&message=${encodeURIComponent(data.message)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+    })
 };
-
 client.on("ready", () => {
-    console.log(`Ready. Logged as ${client.user.tag}!`);
-    client.user.setActivity("Pronote", {
-        type: "WATCHING"
-    });
+    console.log(`
+    ╭─────────────────────────────────────────────────────────────────╮
+    │                          ~ Pronote ~                            │
+    │                                                                 │
+    │                ${client.user.tag} est opérationnel !                 │
+    │                      Client: ${process.env.PRONOTE_USERNAME}                           │
+    │                      Version: v.1.2.0                           │
+    │               Fonction: Professeur Absent et Notes              │
+    ╰─────────────────────────────────────────────────────────────────╯
+ `)
+    setInterval(() => {
+        client.user.setActivity("Pronote", {
+            type: "WATCHING"
+        });
+    }, 10000)
+
     pronoteSynchronization();
     setInterval(() => {
         const date = new Date();
@@ -141,4 +178,4 @@ client.on("ready", () => {
 });
 
 // Connexion à Discord
-client.login(process.env.TOKEN);
+client.login(process.env.TOKEN)
